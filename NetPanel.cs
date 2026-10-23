@@ -93,10 +93,16 @@ class Panel:Form{
    var g=pr.GatewayAddresses.FirstOrDefault(x=>x.Address.AddressFamily==AddressFamily.InterNetwork);gw=g!=null?g.Address.ToString():"-";
    dnsCur=DetectDns(nic,pr);ReadRssi();}catch(Exception ex){status=ex.Message;}Invalidate();}
  public static string DnsList(IPInterfaceProperties pr){return string.Join(", ",pr.DnsAddresses.Select(x=>x.ToString()));}
+ // Fresh lookup by IPv4 ifIndex: cached NetworkInterface objects can return stale DNS lists.
+ static NetworkInterface Fresh(int idx){if(idx<0)return null;try{return NetworkInterface.GetAllNetworkInterfaces().FirstOrDefault(x=>P.Index(x)==idx);}catch{return null;}}
+ static string Classify(string first){if(first=="1.1.1.1"||first=="1.0.0.1")return "Cloudflare";if(first=="8.8.8.8"||first=="8.8.4.4")return "Google";return "Custom";}
+ // Provider = this adapter's first static IPv4 server. Empty static NameServer in the registry = DHCP.
  string DetectDns(NetworkInterface n,IPInterfaceProperties pr){
-  string st="";try{using(var k=Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces\"+n.Id))st=(k.GetValue("NameServer") as string)??"";}catch{}
-  if(st.Trim()=="")return "DHCP";var d=DnsList(pr);
-  if(d.Contains("1.1.1.1")||d.Contains("1.0.0.1"))return "Cloudflare";if(d.Contains("8.8.8.8")||d.Contains("8.8.4.4"))return "Google";return "Custom";}
+  string st=null;try{using(var k=Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces\"+n.Id))if(k!=null)st=(k.GetValue("NameServer") as string)??"";}catch{}
+  if(st!=null){var first=st.Split(new[]{',',' ',';'},StringSplitOptions.RemoveEmptyEntries).Select(x=>x.Trim()).FirstOrDefault(x=>{IPAddress a;return IPAddress.TryParse(x,out a)&&a.AddressFamily==AddressFamily.InterNetwork;});
+   return first==null?"DHCP":Classify(first);}
+  // registry unreadable: fall back to a freshly enumerated adapter's IPv4 DNS list
+  var f=Fresh(P.Index(n))??n;try{var a=f.GetIPProperties().DnsAddresses.FirstOrDefault(x=>x.AddressFamily==AddressFamily.InterNetwork);return a==null?"DHCP":Classify(a.ToString());}catch{return "?";}}
  void DoPing(){var pg=new Ping();pg.PingCompleted+=(s,e)=>{long v=(e.Error==null&&e.Reply!=null&&e.Reply.Status==IPStatus.Success)?e.Reply.RoundtripTime:-1;
    lock(pings){pings.Enqueue(v);while(pings.Count>20)pings.Dequeue();}if(v>=0)lastPing=v;pg.Dispose();if(IsHandleCreated)BeginInvoke((Action)Invalidate);};
   try{pg.SendAsync(IPAddress.Parse("1.1.1.1"),1500,null);}catch{}}
@@ -143,12 +149,14 @@ class Panel:Form{
    double v=Interlocked.Read(ref total)*8/1e6/sec;if(down)dlM=v;else ulM=v;try{BeginInvoke((Action)Invalidate);}catch{}}
   foreach(var t in ths)t.Join(3000);return Interlocked.Read(ref total)*8/1e6/(dur-1);}
  // ---------- DNS ----------
- void SetDns(int h){if(nic==null||ifIdx<0)return;string args;
+ void SetDns(int h){if(nic==null||ifIdx<0)return;if(h!=3&&dnsCur==dnsN[h]){status="DNS already "+dnsN[h];Invalidate();return;}string args;
   if(h==0)args="dhcp";else if(h==1)args="static 1.1.1.1 1.0.0.1 2606:4700:4700::1111 2606:4700:4700::1001";else if(h==2)args="static 8.8.8.8 8.8.4.4 2001:4860:4860::8888 2001:4860:4860::8844";
   else{var s=Ask("Custom DNS (space/comma separated IPv4/IPv6):");if(string.IsNullOrWhiteSpace(s))return;var ok=s.Split(new[]{' ',',',';'},StringSplitOptions.RemoveEmptyEntries).Where(x=>{IPAddress a;return IPAddress.TryParse(x,out a);}).ToArray();if(ok.Length==0)return;args="static "+string.Join(" ",ok);}
-  try{Directory.CreateDirectory(P.Dir);File.AppendAllText(Path.Combine(P.Dir,"dns-backup.txt"),DateTime.Now.ToString("s")+"  adapter="+nic.Name+" ifIndex="+ifIdx+" mode="+dnsCur+" servers="+DnsList(nic.GetIPProperties())+"\r\n");}catch{}
+  string target=dnsN[h];int idx0=ifIdx;var fr=Fresh(ifIdx)??nic;string prev="";try{prev=DnsList(fr.GetIPProperties());}catch{}
   try{var p=Process.Start(new ProcessStartInfo(Application.ExecutablePath,"--setdns "+ifIdx+" "+args){Verb="runas",UseShellExecute=true,WindowStyle=ProcessWindowStyle.Hidden});
-   Task.Run(()=>{p.WaitForExit();Thread.Sleep(500);try{BeginInvoke((Action)Refresh1);}catch{}});}catch{status="DNS change cancelled";}Invalidate();}
+   // log the previous servers only once the elevated change has actually been accepted (UAC approved)
+   try{Directory.CreateDirectory(P.Dir);File.AppendAllText(Path.Combine(P.Dir,"dns-backup.txt"),DateTime.Now.ToString("s")+"  adapter="+fr.Name+" ifIndex="+idx0+" mode="+dnsCur+" servers="+prev+" -> "+target+"\r\n");}catch{}
+   Task.Run(()=>{p.WaitForExit();int code=-1;try{code=p.ExitCode;}catch{}Thread.Sleep(500);try{BeginInvoke((Action)(()=>{nic=null;Refresh1();status=code==0?"DNS set to "+target+(dnsCur==target?"":" (detected: "+dnsCur+")"):"DNS change failed (exit "+code+")";Invalidate();}));}catch{}});}catch{status="DNS change cancelled";}Invalidate();}
  string Ask(string q){var f=new Form{Text="NetPanel DNS",Size=new Size(420,150),BackColor=BG,ForeColor=HI,Font=fB,FormBorderStyle=FormBorderStyle.FixedToolWindow,StartPosition=FormStartPosition.CenterScreen,TopMost=true};
   var l=new Label{Text=q,Left=10,Top=10,Width=390};var tb=new TextBox{Left=10,Top=35,Width=385,BackColor=Color.Black,ForeColor=HI,BorderStyle=BorderStyle.FixedSingle};
   var b=new Button{Text="Apply",Left=315,Top=68,Width=80,DialogResult=DialogResult.OK,FlatStyle=FlatStyle.Flat};f.Controls.AddRange(new Control[]{l,tb,b});f.AcceptButton=b;shooting=true;var r=f.ShowDialog();shooting=false;return r==DialogResult.OK?tb.Text:null;}
