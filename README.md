@@ -37,7 +37,7 @@ Inspired by the Omarchy network panel — dark, emerald, Consolas, one click awa
 > **SmartScreen:** the exe is not code-signed, so Windows may show *"Windows protected your PC"*.
 > Click **More info → Run anyway**. You can also build it yourself from source (below) in a few seconds.
 
-Prefer a scripted install? Download `NetPanel-v1.0.0.zip`, extract, and run:
+Prefer a scripted install? Download `NetPanel-v1.0.1.zip`, extract, and run:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\install.ps1
@@ -47,7 +47,7 @@ This copies the exe to `%LOCALAPPDATA%\Programs\NetPanel`, unblocks it, adds a p
 
 ### Verify the download
 
-Each release includes `SHA256SUMS` (also as `SHA256SUMS.txt`), listing hashes of `NetPanel.exe` and the zip. A copy for v1.0.0 is in this repo as [`SHA256SUMS`](SHA256SUMS). Compare with:
+Each release includes `SHA256SUMS` (also as `SHA256SUMS.txt`), listing hashes of `NetPanel.exe` and the zip. A copy for the latest release (v1.0.1) is in this repo as [`SHA256SUMS`](SHA256SUMS). Compare with:
 
 ```powershell
 Get-FileHash .\NetPanel.exe -Algorithm SHA256
