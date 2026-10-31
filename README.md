@@ -25,8 +25,26 @@ Inspired by the Omarchy network panel — dark, emerald, Consolas, one click awa
 - **Public IPv4 & location** chip — click to copy, eye icon to mask, cached for 5 minutes.
 - **Speed test** — multi-stream download/upload against Cloudflare (Hetzner fallback for download).
 - **One-click DNS** — DHCP, Cloudflare, Google or Custom, applied through an elevated helper (UAC prompt) with a backup of the previous servers.
+- **Color schemes** — four bubbles at the top of the panel switch the accent instantly between **green** (default), **yellow**, **blue** and **red**; the choice is remembered. See [Color schemes](#-color-schemes).
 - **Pin & drag** the panel anywhere; **Start with Windows** toggle in the tray menu.
 - Single ~64 KB exe, no installer, no runtime to download, no admin required (except when changing DNS).
+
+## ◐ Color schemes
+
+Click one of the four bubbles under the top edge of the panel (labelled *Color Scheme*) to recolor it. The selected bubble shows a ring.
+
+| Theme | Accent | Upload / tx color |
+|---|---|---|
+| Green (default) | emerald, the original look | cyan |
+| Yellow | amber/gold | cyan |
+| Blue | azure | violet (cyan would clash with blue) |
+| Red | crimson | cyan |
+
+The theme recolors the text highlights, active button, borders, signal meter, graph, icons, the tray icon and the tray menu. The choice is saved as `theme=` in `%LOCALAPPDATA%\NetPanel\settings` and restored on the next start. In the red theme, packet loss is shown in amber so that it still stands out.
+
+![The four color schemes](docs/themes.png)
+
+<sub>Screenshots use dummy values.</sub>
 
 ## ⇩ Install
 
@@ -37,7 +55,7 @@ Inspired by the Omarchy network panel — dark, emerald, Consolas, one click awa
 > **SmartScreen:** the exe is not code-signed, so Windows may show *"Windows protected your PC"*.
 > Click **More info → Run anyway**. You can also build it yourself from source (below) in a few seconds.
 
-Prefer a scripted install? Download `NetPanel-v1.0.1.zip`, extract, and run:
+Prefer a scripted install? Download `NetPanel-v1.1.0.zip`, extract, and run:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\install.ps1
@@ -47,7 +65,7 @@ This copies the exe to `%LOCALAPPDATA%\Programs\NetPanel`, unblocks it, adds a p
 
 ### Verify the download
 
-Each release includes `SHA256SUMS` (also as `SHA256SUMS.txt`), listing hashes of `NetPanel.exe` and the zip. A copy for the latest release (v1.0.1) is in this repo as [`SHA256SUMS`](SHA256SUMS). Compare with:
+Each release includes `SHA256SUMS` (also as `SHA256SUMS.txt`), listing hashes of `NetPanel.exe` and the zip. A copy for the latest release (v1.1.0) is in this repo as [`SHA256SUMS`](SHA256SUMS). Compare with:
 
 ```powershell
 Get-FileHash .\NetPanel.exe -Algorithm SHA256
@@ -70,7 +88,7 @@ No telemetry, no accounts, no analytics. The only network traffic NetPanel gener
 | Only when you click **Run** | `speed.cloudflare.com` (fallback `ash-speed.hetzner.com`) | speed test |
 
 The Wi-Fi key is read locally via `netsh` only when you click reveal/copy and is kept in memory only.
-Local files live in `%LOCALAPPDATA%\NetPanel`: `settings` (pin/position/counter baseline) and `dns-backup.txt` (written only when you change DNS); `speedtest.log` only if you run with `--log`.
+Local files live in `%LOCALAPPDATA%\NetPanel`: `settings` (pin/position/counter baseline/color scheme) and `dns-backup.txt` (written only when you change DNS); `speedtest.log` only if you run with `--log`.
 
 ## 🛠 Build from source
 
@@ -91,6 +109,8 @@ build.cmd
 | `--log` (or `NETPANEL_LOG=1`) | write speed-test diagnostics to `%LOCALAPPDATA%\NetPanel\speedtest.log` |
 | `--dev` (or `NETPANEL_DEV=1`) | enable the test hook: while a `--dev` instance is running, `NetPanel.exe --trigger` makes it run a speed test and saves a screenshot to `%LOCALAPPDATA%\NetPanel`; if a `cmd.txt` exists there it runs that command instead (`demo` = render with dummy values, `force=ethernet` = preview Ethernet mode once) |
 | `--shot <file.png> [--speed]` | render the panel to a PNG (plus a `.txt` summary) without the tray, optionally after a speed test |
+| `--shot … --theme <green\|yellow\|blue\|red>` | render with that color scheme (not saved to settings) |
+| `--shot … --demo` | render with dummy values (documentation IPs, fake SSID/location), useful for screenshots |
 
 The hook is inactive in normal runs.
 

@@ -14,7 +14,7 @@ class P{
   if(a.Length>0&&a[0]=="--trigger"){try{EventWaitHandle.OpenExisting("NetPanel_"+P.U+"_test").Set();}catch{return 2;}return 0;}
   if(!created&&shot==null) return 0;
   Application.EnableVisualStyles();
-  if(shot!=null){var f=new Panel();f.Shot(shot,speed);return 0;}
+  if(shot!=null){var f=new Panel();int ti=Array.IndexOf(a,"--theme");if(ti>=0&&ti+1<a.Length){int tv=Array.IndexOf(Th.Names,a[ti+1]);if(tv>=0)Th.Id=tv;}if(a.Contains("--demo"))Demo=true;f.Shot(shot,speed);return 0;}
   new Tray();Application.Run();GC.KeepAlive(m);return 0;}
  static int SetDns(string[] a){ // --setdns ifIndex mode [servers...]
   string idx=a[1],mode=a[2];string cmd;
@@ -31,11 +31,28 @@ class P{
   return NetworkInterface.GetAllNetworkInterfaces().FirstOrDefault(n=>n.OperationalStatus==OperationalStatus.Up&&n.NetworkInterfaceType!=NetworkInterfaceType.Loopback);}
  public static int Index(NetworkInterface n){try{return n.GetIPProperties().GetIPv4Properties().Index;}catch{return -1;}}
 }
+// ---------- colour themes ----------
+// 0 green (original colours, returned unchanged), 1 yellow, 2 blue, 3 red. Other themes hue-rotate the green palette.
+static class Th{
+ public static int Id;public static readonly string[] Names={"green","yellow","blue","red"};
+ static readonly double[] Hue={0,45,215,354},Lit={0,-0.02,0.05,0.02};static Dictionary<int,Color> cache=new Dictionary<int,Color>();
+ public static Color C(int r,int g,int b){return C(255,r,g,b);}
+ public static Color C(int a,int r,int g,int b){if(Id==0)return Color.FromArgb(a,r,g,b);int key=(Id<<24)|(r<<16)|(g<<8)|b;Color c;
+  lock(cache){if(!cache.TryGetValue(key,out c)){c=Rot(r,g,b);cache[key]=c;}}return Color.FromArgb(a,c);}
+ public static Color Sec{get{return Id==2?Color.FromArgb(190,150,255):Color.FromArgb(0,215,255);}}
+ public static Color Bad{get{return Id==3?Color.FromArgb(255,196,0):Color.FromArgb(255,90,90);}}
+ public static Color Swatch(int t){int o=Id;Id=t;var c=C(46,255,138);Id=o;return c;}
+ static Color Rot(int r,int g,int b){double R=r/255.0,G=g/255.0,B=b/255.0,mx=Math.Max(R,Math.Max(G,B)),mn=Math.Min(R,Math.Min(G,B)),l=(mx+mn)/2,h=0,s=0,d=mx-mn;
+  if(d>0){s=l>0.5?d/(2-mx-mn):d/(mx+mn);if(mx==R)h=((G-B)/d)%6;else if(mx==G)h=(B-R)/d+2;else h=(R-G)/d+4;h*=60;if(h<0)h+=360;}
+  h=Hue[Id];if(s>0.3)l=Math.Max(0,Math.Min(1,l+Lit[Id]*(l>0.25?1:0.3)));
+  double q=l<0.5?l*(1+s):l+s-l*s,p=2*l-q;Func<double,double> f=t=>{if(t<0)t+=1;if(t>1)t-=1;return t<1/6.0?p+(q-p)*6*t:t<0.5?q:t<2/3.0?p+(q-p)*(2/3.0-t)*6:p;};
+  return Color.FromArgb((int)Math.Round(f(h/360+1/3.0)*255),(int)Math.Round(f(h/360)*255),(int)Math.Round(f(h/360-1/3.0)*255));}
+}
 class Tray{
  NotifyIcon ni=new NotifyIcon();Panel panel;System.Windows.Forms.Timer t=new System.Windows.Forms.Timer();long lr,lt;IntPtr hi;
  public Tray(){
   panel=new Panel();ni.Text="NetPanel";Upd(0,0);ni.Visible=true;
-  var cm=new ContextMenuStrip();cm.Renderer=new ToolStripProfessionalRenderer(new DarkColors());cm.BackColor=Color.FromArgb(12,14,13);cm.ForeColor=Color.FromArgb(46,255,138);cm.Font=new Font("Consolas",10);
+  var cm=new ContextMenuStrip();cm.Renderer=new ToolStripProfessionalRenderer(new DarkColors());cm.BackColor=Th.C(12,14,13);cm.ForeColor=Th.C(46,255,138);Panel.ThemeChanged=()=>{cm.BackColor=Th.C(12,14,13);cm.ForeColor=Th.C(46,255,138);Upd(0,0);};cm.Font=new Font("Consolas",10);
   cm.Items.Add("Open",null,(s,e)=>panel.ShowNear());
   var st=new ToolStripMenuItem("Start with Windows"){Checked=Auto,CheckOnClick=true};st.Click+=(s,e)=>Auto=st.Checked;cm.Items.Add(st);
   cm.Items.Add("Exit",null,(s,e)=>{ni.Visible=false;Application.Exit();});ni.ContextMenuStrip=cm;
@@ -47,19 +64,19 @@ class Tray{
   set{using(var k=Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run")){if(value)k.SetValue("NetPanel","\""+Application.ExecutablePath+"\"");else k.DeleteValue("NetPanel",false);}}}
  void Upd(long rx,long tx){
   var b=new Bitmap(32,32);using(var g=Graphics.FromImage(b)){g.SmoothingMode=SmoothingMode.AntiAlias;g.Clear(Color.Transparent);
-   using(var br=new SolidBrush(Color.FromArgb(10,20,14)))g.FillEllipse(br,1,1,30,30);using(var pn=new Pen(Color.FromArgb(25,146,91),3))g.DrawEllipse(pn,2,2,28,28);
+   using(var br=new SolidBrush(Th.C(10,20,14)))g.FillEllipse(br,1,1,30,30);using(var pn=new Pen(Th.C(25,146,91),3))g.DrawEllipse(pn,2,2,28,28);
    int h1=(int)Math.Min(18,2+Math.Log10(1+rx/1024.0)*4),h2=(int)Math.Min(18,2+Math.Log10(1+tx/1024.0)*4);
-   g.FillRectangle(new SolidBrush(Color.FromArgb(46,255,138)),9,24-h1,6,h1);g.FillRectangle(new SolidBrush(Color.FromArgb(0,215,255)),17,24-h2,6,h2);}
+   g.FillRectangle(new SolidBrush(Th.C(46,255,138)),9,24-h1,6,h1);g.FillRectangle(new SolidBrush(Th.Sec),17,24-h2,6,h2);}
   var old=hi;hi=b.GetHicon();ni.Icon=Icon.FromHandle(hi);b.Dispose();if(old!=IntPtr.Zero)DestroyIcon_(old);
   ni.Text="NetPanel  \u2193"+Panel.Rate(rx/2)+" \u2191"+Panel.Rate(tx/2);}
  [DllImport("user32.dll",EntryPoint="DestroyIcon")] static extern bool DestroyIcon_(IntPtr h);
 }
-class DarkColors:ProfessionalColorTable{public override Color MenuItemSelected{get{return Color.FromArgb(20,60,40);}}public override Color MenuItemBorder{get{return Color.FromArgb(25,146,91);}}
- public override Color MenuBorder{get{return Color.FromArgb(25,146,91);}}public override Color ToolStripDropDownBackground{get{return Color.FromArgb(12,14,13);}}
- public override Color ImageMarginGradientBegin{get{return Color.FromArgb(12,14,13);}}public override Color ImageMarginGradientMiddle{get{return Color.FromArgb(12,14,13);}}public override Color ImageMarginGradientEnd{get{return Color.FromArgb(12,14,13);}}
- public override Color MenuItemSelectedGradientBegin{get{return Color.FromArgb(20,60,40);}}public override Color MenuItemSelectedGradientEnd{get{return Color.FromArgb(20,60,40);}}}
+class DarkColors:ProfessionalColorTable{public override Color MenuItemSelected{get{return Th.C(20,60,40);}}public override Color MenuItemBorder{get{return Th.C(25,146,91);}}
+ public override Color MenuBorder{get{return Th.C(25,146,91);}}public override Color ToolStripDropDownBackground{get{return Th.C(12,14,13);}}
+ public override Color ImageMarginGradientBegin{get{return Th.C(12,14,13);}}public override Color ImageMarginGradientMiddle{get{return Th.C(12,14,13);}}public override Color ImageMarginGradientEnd{get{return Th.C(12,14,13);}}
+ public override Color MenuItemSelectedGradientBegin{get{return Th.C(20,60,40);}}public override Color MenuItemSelectedGradientEnd{get{return Th.C(20,60,40);}}}
 class Panel:Form{
- static Color BG=Color.FromArgb(9,11,10),EM=Color.FromArgb(25,146,91),HI=Color.FromArgb(46,255,138),CY=Color.FromArgb(0,215,255),DIM=Color.FromArgb(110,135,120),TX=Color.FromArgb(215,230,220);
+ static Color BG{get{return Th.C(9,11,10);}} static Color EM{get{return Th.C(25,146,91);}} static Color HI{get{return Th.C(46,255,138);}} static Color CY{get{return Th.Sec;}} static Color DIM{get{return Th.C(110,135,120);}} static Color TX{get{return Th.C(215,230,220);}}
  Font fT=new Font("Consolas",15,FontStyle.Bold),fS=new Font("Consolas",9),fN=new Font("Consolas",10.5f),fB=new Font("Consolas",10);
  System.Windows.Forms.Timer tick=new System.Windows.Forms.Timer(),pingT=new System.Windows.Forms.Timer();
  NetworkInterface nic;long lr=-1,lt=-1;double rxR,txR;long totR,totT;string ip="-",gw="-",name="-",speedBadge="",dnsCur="?";int ifIdx=-1;
@@ -76,7 +93,7 @@ class Panel:Form{
   MouseClick+=(s,e)=>Click1(Hit(e.Location));
   var path=Rnd(new RectangleF(0,0,Width,Height),16);Region=new Region(path);}
  protected override CreateParams CreateParams{get{var c=base.CreateParams;c.ExStyle|=0x80;return c;}}
- int Hit(Point p){if(runR.Contains(p))return -1;if(resetR.Contains(p))return 10;if(pinR.Contains(p))return 11;if(isWifi&&eyeR.Contains(p))return 12;if(isWifi&&copyR.Contains(p))return 13;if(ipEyeR.Contains(p))return 15;if(ipR.Contains(p))return 14;for(int i=0;i<4;i++)if(dnsR[i].Contains(p))return i;return -2;}
+ int Hit(Point p){if(runR.Contains(p))return -1;if(resetR.Contains(p))return 10;if(pinR.Contains(p))return 11;if(isWifi&&eyeR.Contains(p))return 12;if(isWifi&&copyR.Contains(p))return 13;if(ipEyeR.Contains(p))return 15;if(ipR.Contains(p))return 14;for(int i=0;i<4;i++)if(dnsR[i].Contains(p))return i;for(int i=0;i<4;i++)if(thR[i].Contains(p))return 20+i;return -2;}
  public void ShowNear(){var wa=Screen.PrimaryScreen.WorkingArea;if(pinned&&px!=int.MinValue&&Screen.AllScreens.Any(sc=>sc.WorkingArea.Contains(px+20,py+20)))Location=new Point(px,py);else Location=new Point(wa.Right-Width-12,wa.Bottom-Height-12);Show();Activate();}
  public static string Rate(double b){return b>=1e9?(b/1e9).ToString("0.00")+" GB/s":b>=1e6?(b/1e6).ToString("0.0")+" MB/s":(b/1e3).ToString("0.0")+" KB/s";}
  static string Sz(double b){return b>=1e12?(b/1e12).ToString("0.00")+" TB":b>=1e9?(b/1e9).ToString("0.00")+" GB":(b/1e6).ToString("0.0")+" MB";}
@@ -106,7 +123,7 @@ class Panel:Form{
  void DoPing(){var pg=new Ping();pg.PingCompleted+=(s,e)=>{long v=(e.Error==null&&e.Reply!=null&&e.Reply.Status==IPStatus.Success)?e.Reply.RoundtripTime:-1;
    lock(pings){pings.Enqueue(v);while(pings.Count>20)pings.Dequeue();}if(v>=0)lastPing=v;pg.Dispose();if(IsHandleCreated)BeginInvoke((Action)Invalidate);};
   try{pg.SendAsync(IPAddress.Parse("1.1.1.1"),1500,null);}catch{}}
- void Click1(int h){if(h==15){ipMask=!ipMask;Invalidate();return;}if(h==14){if(pubIp!=null){try{Clipboard.SetText(pubIp);status="public ip copied to clipboard";}catch{}Invalidate();}else if(ipState=="offline")MaybeIp(true);return;}if(h==10){DoReset();return;}if(h==11){pinned=!pinned;if(pinned){px=Left;py=Top;}SaveSettings();Invalidate();return;}if(h==12){if(reveal){reveal=false;Invalidate();}else FetchKey(()=>{reveal=true;});return;}if(h==13){FetchKey(()=>{try{Clipboard.SetText(wkey);status="network key copied to clipboard";}catch{}});return;}if(h==-1&&!testing)RunSpeed();else if(h>=0)SetDns(h);}
+ void Click1(int h){if(h>=20&&h<=23){SetTheme(h-20);return;}if(h==15){ipMask=!ipMask;Invalidate();return;}if(h==14){if(pubIp!=null){try{Clipboard.SetText(pubIp);status="public ip copied to clipboard";}catch{}Invalidate();}else if(ipState=="offline")MaybeIp(true);return;}if(h==10){DoReset();return;}if(h==11){pinned=!pinned;if(pinned){px=Left;py=Top;}SaveSettings();Invalidate();return;}if(h==12){if(reveal){reveal=false;Invalidate();}else FetchKey(()=>{reveal=true;});return;}if(h==13){FetchKey(()=>{try{Clipboard.SetText(wkey);status="network key copied to clipboard";}catch{}});return;}if(h==-1&&!testing)RunSpeed();else if(h>=0)SetDns(h);}
  // ---------- speed test ----------
  public Task RunSpeed(){testing=true;dlM=ulM=-1;Invalidate();return Task.Run(()=>{try{
    ServicePointManager.SecurityProtocol|=SecurityProtocolType.Tls12;ServicePointManager.DefaultConnectionLimit=32;ServicePointManager.Expect100Continue=false;
@@ -164,43 +181,53 @@ class Panel:Form{
  static GraphicsPath Rnd(RectangleF r,float rad){var p=new GraphicsPath();float d=rad*2;p.AddArc(r.X,r.Y,d,d,180,90);p.AddArc(r.Right-d,r.Y,d,d,270,90);p.AddArc(r.Right-d,r.Bottom-d,d,d,0,90);p.AddArc(r.X,r.Bottom-d,d,d,90,90);p.CloseFigure();return p;}
  void Row(Graphics g,float y,string k1,string v1,string k2,string v2,Color c1,Color c2){var R=new StringFormat{Alignment=StringAlignment.Far};
   float half=Width/2f;g.DrawString(k1,fN,new SolidBrush(DIM),24,y);g.DrawString(v1,fN,new SolidBrush(c1),new RectangleF(24,y,half-48,20),R);g.DrawString(k2,fN,new SolidBrush(DIM),half+12,y);g.DrawString(v2,fN,new SolidBrush(c2),new RectangleF(half+12,y,half-36,20),R);}
- void Btn(Graphics g,RectangleF r,string t,bool active,bool hov){using(var p=Rnd(r,7)){g.FillPath(new SolidBrush(active?Color.FromArgb(18,70,45):hov?Color.FromArgb(20,30,25):Color.FromArgb(13,16,15)),p);
-  g.DrawPath(new Pen(active?HI:hov?EM:Color.FromArgb(50,70,60),active?1.6f:1f),p);}g.DrawString(t,fB,new SolidBrush(active?HI:TX),r,new StringFormat{Alignment=StringAlignment.Center,LineAlignment=StringAlignment.Center});}
- void Sep(Graphics g,float y){using(var br=new LinearGradientBrush(new PointF(20,y),new PointF(Width-20,y),Color.FromArgb(0,25,146,91),Color.FromArgb(0,25,146,91))){var cb=new ColorBlend{Colors=new[]{Color.FromArgb(0,25,146,91),Color.FromArgb(160,25,146,91),Color.FromArgb(0,25,146,91)},Positions=new[]{0f,.5f,1f}};br.InterpolationColors=cb;g.FillRectangle(br,20,y,Width-40,1);}}
+ void Btn(Graphics g,RectangleF r,string t,bool active,bool hov){using(var p=Rnd(r,7)){g.FillPath(new SolidBrush(active?Th.C(18,70,45):hov?Th.C(20,30,25):Th.C(13,16,15)),p);
+  g.DrawPath(new Pen(active?HI:hov?EM:Th.C(50,70,60),active?1.6f:1f),p);}g.DrawString(t,fB,new SolidBrush(active?HI:TX),r,new StringFormat{Alignment=StringAlignment.Center,LineAlignment=StringAlignment.Center});}
+ void Sep(Graphics g,float y){using(var br=new LinearGradientBrush(new PointF(20,y),new PointF(Width-20,y),Th.C(0,25,146,91),Th.C(0,25,146,91))){var cb=new ColorBlend{Colors=new[]{Th.C(0,25,146,91),Th.C(160,25,146,91),Th.C(0,25,146,91)},Positions=new[]{0f,.5f,1f}};br.InterpolationColors=cb;g.FillRectangle(br,20,y,Width-40,1);}}
  void Spark(Graphics g,List<double> h,RectangleF r,Color c){if(h.Count<2)return;double mx=Math.Max(1024,Math.Max(rxH.Max(),txH.Max()));var pts=new List<PointF>();
   for(int i=0;i<h.Count;i++)pts.Add(new PointF(r.Right-(h.Count-1-i)*(r.Width/59f),r.Bottom-(float)(Math.Sqrt(h[i]/mx)*r.Height)));
   var fill=new List<PointF>(pts){new PointF(pts.Last().X,r.Bottom),new PointF(pts[0].X,r.Bottom)};g.FillPolygon(new SolidBrush(Color.FromArgb(28,c)),fill.ToArray());g.DrawLines(new Pen(c,1.4f),pts.ToArray());}
  protected override void OnPaint(PaintEventArgs e){if(P.Demo){ip="192.0.2.10";gw="192.0.2.1";netName="HOME-WIFI";mac="00:00:5E:00:53:01";pubIp="203.0.113.7";pubLoc="Springfield";ipMask=true;reveal=false;}var g=e.Graphics;g.SmoothingMode=SmoothingMode.AntiAlias;g.TextRenderingHint=System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
-  var full=new RectangleF(0,0,Width-1,Height-1);using(var p=Rnd(full,16))using(var bg=new LinearGradientBrush(full,Color.FromArgb(6,12,9),Color.FromArgb(3,4,4),90f))g.FillPath(bg,p);
-  for(int i=4;i>=1;i--)using(var p=Rnd(new RectangleF(i,i,Width-1-2*i,Height-1-2*i),16-i))g.DrawPath(new Pen(Color.FromArgb(18*(5-i),25,146,91),1.5f),p);
-  using(var p=Rnd(new RectangleF(1,1,Width-3,Height-3),15))g.DrawPath(new Pen(Color.FromArgb(200,25,146,91),1.2f),p);
+  var full=new RectangleF(0,0,Width-1,Height-1);using(var p=Rnd(full,16))using(var bg=new LinearGradientBrush(full,Th.C(6,12,9),Th.C(3,4,4),90f))g.FillPath(bg,p);
+  for(int i=4;i>=1;i--)using(var p=Rnd(new RectangleF(i,i,Width-1-2*i,Height-1-2*i),16-i))g.DrawPath(new Pen(Th.C(18*(5-i),25,146,91),1.5f),p);
+  using(var p=Rnd(new RectangleF(1,1,Width-3,Height-3),15))g.DrawPath(new Pen(Th.C(200,25,146,91),1.2f),p);
   // header icon
-  bool wifi=isWifi;var ir=new RectangleF(24,26,36,36);using(var p=Rnd(ir,7)){g.FillPath(new SolidBrush(Color.FromArgb(14,45,30)),p);g.DrawPath(new Pen(EM,1.2f),p);}
+  bool wifi=isWifi;var ir=new RectangleF(24,26,36,36);using(var p=Rnd(ir,7)){g.FillPath(new SolidBrush(Th.C(14,45,30)),p);g.DrawPath(new Pen(EM,1.2f),p);}
   if(wifi){for(int i=0;i<3;i++)g.DrawArc(new Pen(HI,2f),33-i*5+5,35-i*5+5,8+i*10,8+i*10,225,90);g.FillEllipse(new SolidBrush(HI),40,50,5,5);}
-  else{g.FillRectangle(new SolidBrush(HI),31,37,22,14);g.FillRectangle(new SolidBrush(HI),36,51,12,4);for(int i=0;i<4;i++)g.FillRectangle(new SolidBrush(Color.FromArgb(14,45,30)),34+i*5,38,2,5);}
+  else{g.FillRectangle(new SolidBrush(HI),31,37,22,14);g.FillRectangle(new SolidBrush(HI),36,51,12,4);for(int i=0;i<4;i++)g.FillRectangle(new SolidBrush(Th.C(14,45,30)),34+i*5,38,2,5);}
   g.DrawString(name,fT,new SolidBrush(TX),72,22);var sub=offline?"N O   D E F A U L T   R O U T E":netName!=""?Spaced(netName):"N O   N E T W O R K";g.DrawString(sub,fS,new SolidBrush(EM),74,50);Meter(g,74+g.MeasureString(sub,fS).Width+12,49);
-  var bs=g.MeasureString(speedBadge,fB);var br2=new RectangleF(Width-24-bs.Width-12,28,bs.Width+12,26);pinR=new RectangleF(br2.X-30,30,20,22);Pin(g,pinR,pinned,hover==11);if(!offline||pubIp!=null)Chips(g,pinR.X-10);using(var p=Rnd(br2,7)){g.FillPath(new SolidBrush(Color.FromArgb(10,30,22)),p);g.DrawPath(new Pen(CY,1.2f),p);}
+  Bubbles(g);
+  var bs=g.MeasureString(speedBadge,fB);var br2=new RectangleF(Width-24-bs.Width-12,28,bs.Width+12,26);pinR=new RectangleF(br2.X-30,30,20,22);Pin(g,pinR,pinned,hover==11);if(!offline||pubIp!=null)Chips(g,pinR.X-10);using(var p=Rnd(br2,7)){g.FillPath(new SolidBrush(Th.C(10,30,22)),p);g.DrawPath(new Pen(CY,1.2f),p);}
   g.DrawString(speedBadge,fB,new SolidBrush(CY),br2,new StringFormat{Alignment=StringAlignment.Center,LineAlignment=StringAlignment.Center});
   int ok,cnt;lock(pings){cnt=pings.Count;ok=pings.Count(x=>x>=0);}string loss=cnt==0?"-":((cnt-ok)*100/cnt)+"%";
-  Row(g,90,"Ping",lastPing<0?"-":lastPing.ToString("0")+" ms","Packet Loss",loss,HI,loss=="0%"||loss=="-"?HI:Color.FromArgb(255,90,90));
+  Row(g,90,"Ping",lastPing<0?"-":lastPing.ToString("0")+" ms","Packet Loss",loss,HI,loss=="0%"||loss=="-"?HI:Th.Bad);
   Row(g,116,"Receiving",Rate(rxR),"Sending",Rate(txR),HI,CY);
   Row(g,142,"Downloaded",Sz(totR),"Uploaded",Sz(totT),TX,TX);Row(g,168,"IP Address",ip,"Gateway",gw,TX,TX);
-  resetR=new RectangleF(108,143,52,18);g.DrawString("reset",new Font("Consolas",7.5f),new SolidBrush(hover==10?HI:Color.FromArgb(80,105,92)),124,145);g.DrawString("⟲",new Font("Segoe UI Symbol",10),new SolidBrush(hover==10?HI:DIM),109,141);
+  resetR=new RectangleF(108,143,52,18);g.DrawString("reset",new Font("Consolas",7.5f),new SolidBrush(hover==10?HI:Th.C(80,105,92)),124,145);g.DrawString("⟲",new Font("Segoe UI Symbol",10),new SolidBrush(hover==10?HI:DIM),109,141);
   if(isWifi){string kv=keyErr!=null?keyErr:reveal&&wkey!=null?wkey:"••••••••";
    g.DrawString("Network key",fN,new SolidBrush(DIM),24,194);eyeR=new RectangleF(128,195,18,16);copyR=new RectangleF(152,195,18,16);Eye(g,eyeR,reveal,hover==12);CopyIco(g,copyR,hover==13);
    var secW=g.MeasureString("Security  "+auth,fN).Width;g.DrawString("Security",fN,new SolidBrush(DIM),Width-24-secW,194);g.DrawString(auth,fN,new SolidBrush(TX),new RectangleF(Width-24-secW,194,secW,20),new StringFormat{Alignment=StringAlignment.Far});
    keyR=new RectangleF(186,192,Width-24-secW-20-186,22);keyMode=DrawFit(g,kv,keyR,reveal?HI:TX);}
   else if(offline)Row(g,194,"Status","no default route","Link","down",DIM,DIM);
   else{g.DrawString("Adapter",fN,new SolidBrush(DIM),24,194);float half=Width/2f;DrawFit(g,desc,new RectangleF(100,192,half-48-76,22),TX);Row(g,194,"","","MAC",mac,TX,TX);}
-  var sr=new RectangleF(24,222,Width-48,34);g.DrawRectangle(new Pen(Color.FromArgb(25,25,146,91)),sr.X,sr.Y,sr.Width,sr.Height);Spark(g,rxH,sr,HI);Spark(g,txH,sr,CY);
+  var sr=new RectangleF(24,222,Width-48,34);g.DrawRectangle(new Pen(Th.C(25,25,146,91)),sr.X,sr.Y,sr.Width,sr.Height);Spark(g,rxH,sr,HI);Spark(g,txH,sr,CY);
   g.DrawString("rx",fS,new SolidBrush(HI),sr.X+3,sr.Y+1);g.DrawString("tx",fS,new SolidBrush(CY),sr.X+22,sr.Y+1);
   Sep(g,272);g.DrawString("SPEED TEST",fB,new SolidBrush(EM),24,298);g.DrawString(testing?"> "+stPhase+" "+(int)(stProg*100)+"% "+(stPhase=="DOWNLOAD"?dlSrc:"cloudflare"):"> src: "+dlSrc,fS,new SolidBrush(DIM),130,300);
   runR=new RectangleF(Width-24-70,288,70,36);Btn(g,runR,testing?"...":"Run",testing,hover==-1);
-  if(testing){var pb=new RectangleF(24,328,Width-48,3);g.FillRectangle(new SolidBrush(Color.FromArgb(25,40,32)),pb);g.FillRectangle(new SolidBrush(stPhase=="UPLOAD"?CY:HI),pb.X,pb.Y,(float)(pb.Width*stProg),3);}
+  if(testing){var pb=new RectangleF(24,328,Width-48,3);g.FillRectangle(new SolidBrush(Th.C(25,40,32)),pb);g.FillRectangle(new SolidBrush(stPhase=="UPLOAD"?CY:HI),pb.X,pb.Y,(float)(pb.Width*stProg),3);}
   Row(g,340,"Download",dlM==-2?"error: "+(dlErr??"?"):dlM<0?"-":dlM.ToString("0")+" Mbps","Upload",ulM<0?"-":ulM.ToString("0")+" Mbps",HI,CY);
   Sep(g,376);g.DrawString("DNS PROVIDER",fB,new SolidBrush(EM),24,396);g.DrawString("> current: "+dnsCur,fS,new SolidBrush(DIM),150,398);
   float bw=(Width-48-3*10)/4f;for(int i=0;i<4;i++){dnsR[i]=new RectangleF(24+i*(bw+10),424,bw,42);Btn(g,dnsR[i],dnsN[i],dnsCur==dnsN[i],hover==i);}
-  Sep(g,484);g.DrawString(status!=""?status:"no telemetry // icmp 1.1.1.1 // ipv4: "+(ipSrc??"1.1.1.1/cdn-cgi/trace + ipinfo.io")+" (on open, 5m cache)",fS,new SolidBrush(Color.FromArgb(70,100,85)),24,494);}
+  Sep(g,484);g.DrawString(status!=""?status:"no telemetry // icmp 1.1.1.1 // ipv4: "+(ipSrc??"1.1.1.1/cdn-cgi/trace + ipinfo.io")+" (on open, 5m cache)",fS,new SolidBrush(Th.C(70,100,85)),24,494);}
+ // ---------- theme bubbles (hit codes 20-23) ----------
+ RectangleF[] thR=new RectangleF[4];public static Action ThemeChanged;int themeSaved;
+ void Bubbles(Graphics g){const float D=12,GAP=10;float x0=Width/2f-(4*D+3*GAP)/2f,y=7;
+  for(int i=0;i<4;i++){var r=new RectangleF(x0+i*(D+GAP),y,D,D);thR[i]=RectangleF.Inflate(r,4,4);var c=Th.Swatch(i);bool sel=Th.Id==i,hov=hover==20+i;
+   if(sel)using(var gp=new SolidBrush(Color.FromArgb(60,c)))g.FillEllipse(gp,RectangleF.Inflate(r,4,4));
+   using(var b=new SolidBrush(sel||hov?c:Color.FromArgb(170,c)))g.FillEllipse(b,r);
+   if(sel)using(var pn=new Pen(Color.FromArgb(230,TX),1.3f))g.DrawEllipse(pn,RectangleF.Inflate(r,2.5f,2.5f));else if(hov)using(var pn=new Pen(Color.FromArgb(150,c),1f))g.DrawEllipse(pn,RectangleF.Inflate(r,2.5f,2.5f));}
+  var lf=new Font("Consolas",7.5f);g.DrawString("Color Scheme",lf,new SolidBrush(DIM),new RectangleF(Width/2f-60,23,120,12),new StringFormat{Alignment=StringAlignment.Center});lf.Dispose();}
+ void SetTheme(int t){if(t<0||t>3)return;Th.Id=t;themeSaved=t;SaveSettings();if(ThemeChanged!=null)ThemeChanged();Invalidate();}
  bool shooting;
 
  [DllImport("user32.dll")] static extern bool ReleaseCapture();[DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr h,int m,IntPtr w,IntPtr l);
@@ -208,9 +235,9 @@ class Panel:Form{
  bool isWifi,reveal;string wkey,keyErr,netName="",auth="-",netFor;DateTime netQ;RectangleF resetR,pinR,eyeR,copyR;
  string SetPath{get{return Path.Combine(P.Dir,"settings");}}
  void LoadSettings(){try{foreach(var l in File.ReadAllLines(SetPath)){var kv=l.Split(new[]{'='},2);if(kv.Length<2)continue;
-   if(kv[0]=="pinned")pinned=kv[1]=="1";else if(kv[0]=="pos"){var p=kv[1].Split(',');px=int.Parse(p[0]);py=int.Parse(p[1]);}
+   if(kv[0]=="pinned")pinned=kv[1]=="1";else if(kv[0]=="theme"){int tv;if(int.TryParse(kv[1],out tv)&&tv>=0&&tv<4){Th.Id=tv;themeSaved=tv;}}else if(kv[0]=="pos"){var p=kv[1].Split(',');px=int.Parse(p[0]);py=int.Parse(p[1]);}
    else if(kv[0].StartsWith("base.")){var p=kv[1].Split(',');bases[kv[0].Substring(5)]=new[]{long.Parse(p[0]),long.Parse(p[1])};}}}catch{}}
- void SaveSettings(){try{Directory.CreateDirectory(P.Dir);var L=new List<string>{"pinned="+(pinned?"1":"0")};if(px!=int.MinValue)L.Add("pos="+px+","+py);
+ void SaveSettings(){try{Directory.CreateDirectory(P.Dir);var L=new List<string>{"pinned="+(pinned?"1":"0")};if(themeSaved!=0)L.Add("theme="+themeSaved);if(px!=int.MinValue)L.Add("pos="+px+","+py);
    foreach(var kv in bases)L.Add("base."+kv.Key+"="+kv.Value[0]+","+kv.Value[1]);File.WriteAllLines(SetPath,L);}catch{}}
  public void DoReset(){if(nic==null)return;var s=nic.GetIPStatistics();bases[nic.Id]=new[]{s.BytesReceived,s.BytesSent};SaveSettings();Refresh1();}
  void OnDeact(){if(!shooting&&!pinned)Hide();}
@@ -268,7 +295,7 @@ class Panel:Form{
   const int N=10;int lit=(int)Math.Round(shownLvl*N);double pulse=0.75+0.25*Math.Sin(DateTime.Now.TimeOfDay.TotalMilliseconds/450.0);
   for(int i=0;i<N;i++){float h=3+i*1.3f,bx=x+i*5,by=y+15-h;bool on=i<lit;
    if(on){g.FillRectangle(new SolidBrush(Color.FromArgb((int)(45*pulse),c)),bx-1,by-1,5,h+2);g.FillRectangle(new SolidBrush(c),bx,by,3,h);}
-   else g.FillRectangle(new SolidBrush(Color.FromArgb(38,55,47)),bx,by,3,h);}
+   else g.FillRectangle(new SolidBrush(Th.C(38,55,47)),bx,by,3,h);}
   g.DrawString((rssiSrc=="~quality"?"~":"")+rssi+" dBm",fS,new SolidBrush(c),x+N*5+6,y+1);}
  public RectangleF keyR;public string keyMode="";ToolTip tip=new ToolTip();
  string DrawFit(Graphics g,string t,RectangleF r,Color c){string mode="fit";Font f=fN;var sf=new StringFormat(StringFormatFlags.NoWrap){Alignment=StringAlignment.Far,LineAlignment=StringAlignment.Center};
@@ -302,7 +329,7 @@ class Panel:Form{
   Func<string,string> mk=l=>head+(l==""?"":" \u00b7 "+l);string it=mk(lc);
   while(lc.Length>0&&g.MeasureString(it,fS).Width+30+lw+6>R2-maxLeft){lc=lc.Substring(0,lc.Length-1);it=mk(lc==""?"":lc.TrimEnd(' ',',')+"\u2026");}
   float x=Chip(g,R2,it,ic,hover==14,18,58);ipR=new RectangleF(x+18,58,R2-x-18,20);ipEyeR=new RectangleF(x+2,58,16,20);
-  if(x-lw-6>=maxLeft-4)g.DrawString(LBL,fS,new SolidBrush(Color.FromArgb(90,125,105)),x-lw-4,61);
+  if(x-lw-6>=maxLeft-4)g.DrawString(LBL,fS,new SolidBrush(Th.C(90,125,105)),x-lw-4,61);
   if(pubIp!=null)Eye(g,new RectangleF(x+3,60,14,15),!ipMask,hover==15);}
  public void SelfTest(){shooting=true;ShowNear();RunSpeed().ContinueWith(_=>BeginInvoke((Action)(()=>{Refresh1();var p=Path.Combine(P.Dir,"shot.png");var b=new Bitmap(Width,Height);DrawToBitmap(b,new Rectangle(0,0,Width,Height));b.Save(p);b.Dispose();
    File.WriteAllText(Path.Combine(P.Dir,"shot.txt"),"tray dl="+dlM.ToString("0.0")+" src="+dlSrc+" err="+dlErr+" ul="+ulM.ToString("0.0"));shooting=false;})));}
