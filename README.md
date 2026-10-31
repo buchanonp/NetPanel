@@ -26,8 +26,9 @@ Inspired by the Omarchy network panel — dark, emerald, Consolas, one click awa
 - **Speed test** — multi-stream download/upload against Cloudflare (Hetzner fallback for download).
 - **One-click DNS** — DHCP, Cloudflare, Google or Custom, applied through an elevated helper (UAC prompt) with a backup of the previous servers.
 - **Color schemes** — four bubbles at the top of the panel switch the accent instantly between **green** (default), **yellow**, **blue** and **red**; the choice is remembered. See [Color schemes](#-color-schemes).
+- **Status footer** — connection uptime (read from Windows, so it is right even after a restart), drops today, and the privacy summary, with a smooth marquee when it doesn't fit. See [Footer](#-footer).
 - **Pin & drag** the panel anywhere; **Start with Windows** toggle in the tray menu.
-- Single ~64 KB exe, no installer, no runtime to download, no admin required (except when changing DNS).
+- Single ~75 KB exe, no installer, no runtime to download, no admin required (except when changing DNS).
 
 ## ◐ Color schemes
 
@@ -46,6 +47,19 @@ The theme recolors the text highlights, active button, borders, signal meter, gr
 
 <sub>Screenshots use dummy values.</sub>
 
+## ▭ Footer
+
+The bottom line of the panel reads, for example:
+
+`uptime 3h 12m // drops today: 0 // no telemetry // icmp 1.1.1.1 // ipv4: 1.1.1.1/cdn-cgi/trace + ipinfo.io (on open, 5m cache)`
+
+- **Uptime** is how long the current connection has been continuously up. NetPanel reads the connect time from the Windows event log `Microsoft-Windows-NetworkProfile/Operational`: the newest *connected* event (10000) for the active adapter's network, if no newer *disconnected* event (10001) follows it. That log is readable without admin rights. It is read at startup, after a reconnect and on resume, never on a timer, so uptime is accurate right after NetPanel restarts. If nothing is found, uptime counts from when NetPanel started or last saw the link come up.
+- **A drop NetPanel sees resets uptime**, even when Windows logged no disconnect (for example, pings failing while the adapter stays up).
+- **Sleep / hibernate:** on resume, uptime restarts from the wake-up time; if Windows reconnects the network after waking (normal for Wi-Fi), it follows that connect event.
+- **Drops today** counts up→down transitions since local midnight. *Down* means no active connection (adapter down, no default route or offline; checked every 2 s by the tray, every 1 s while the panel is open) or 3 consecutive failed pings (~6 s) while the panel is open. The count is saved in `settings` (`drops=`) and resets at midnight. No extra network traffic: it reuses the existing pings, which only run while the panel is open.
+- **Action messages** (for example "public ip copied to clipboard", DNS or speed-test status) replace the line for about 4 s, then fade back.
+- **Marquee:** when the line is wider than the panel it scrolls smoothly (~35 px/s) in a seamless loop with soft fades at both edges. Text that fits does not scroll, and animation runs only while the panel is visible.
+
 ## ⇩ Install
 
 1. Download **`NetPanel.exe`** from the [latest release](https://github.com/buchanonp/NetPanel/releases/latest).
@@ -55,7 +69,7 @@ The theme recolors the text highlights, active button, borders, signal meter, gr
 > **SmartScreen:** the exe is not code-signed, so Windows may show *"Windows protected your PC"*.
 > Click **More info → Run anyway**. You can also build it yourself from source (below) in a few seconds.
 
-Prefer a scripted install? Download `NetPanel-v1.1.0.zip`, extract, and run:
+Prefer a scripted install? Download `NetPanel-v1.2.0.zip`, extract, and run:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\install.ps1
@@ -65,7 +79,7 @@ This copies the exe to `%LOCALAPPDATA%\Programs\NetPanel`, unblocks it, adds a p
 
 ### Verify the download
 
-Each release includes `SHA256SUMS` (also as `SHA256SUMS.txt`), listing hashes of `NetPanel.exe` and the zip. A copy for the latest release (v1.1.0) is in this repo as [`SHA256SUMS`](SHA256SUMS). Compare with:
+Each release includes `SHA256SUMS` (also as `SHA256SUMS.txt`), listing hashes of `NetPanel.exe` and the zip. A copy for the latest release (v1.2.0) is in this repo as [`SHA256SUMS`](SHA256SUMS). Compare with:
 
 ```powershell
 Get-FileHash .\NetPanel.exe -Algorithm SHA256
@@ -88,7 +102,7 @@ No telemetry, no accounts, no analytics. The only network traffic NetPanel gener
 | Only when you click **Run** | `speed.cloudflare.com` (fallback `ash-speed.hetzner.com`) | speed test |
 
 The Wi-Fi key is read locally via `netsh` only when you click reveal/copy and is kept in memory only.
-Local files live in `%LOCALAPPDATA%\NetPanel`: `settings` (pin/position/counter baseline/color scheme) and `dns-backup.txt` (written only when you change DNS); `speedtest.log` only if you run with `--log`.
+Local files live in `%LOCALAPPDATA%\NetPanel`: `settings` (pin/position/counter baseline/color scheme/today's drop count) and `dns-backup.txt` (written only when you change DNS); `speedtest.log` only if you run with `--log`.
 
 ## 🛠 Build from source
 
@@ -111,6 +125,7 @@ build.cmd
 | `--shot <file.png> [--speed]` | render the panel to a PNG (plus a `.txt` summary) without the tray, optionally after a speed test |
 | `--shot … --theme <green\|yellow\|blue\|red>` | render with that color scheme (not saved to settings) |
 | `--shot … --demo` | render with dummy values (documentation IPs, fake SSID/location), useful for screenshots |
+| `--shot … --hold <seconds>` | keep the panel running (animations included) for that many seconds before capturing, e.g. to check the footer marquee |
 
 The hook is inactive in normal runs.
 

@@ -1,4 +1,4 @@
-using System;using System.Drawing;using System.Drawing.Drawing2D;using System.Windows.Forms;using System.Net;using System.Net.NetworkInformation;using System.Net.Sockets;
+using System;using System.Globalization;using System.Drawing;using System.Drawing.Drawing2D;using System.Windows.Forms;using System.Net;using System.Net.NetworkInformation;using System.Net.Sockets;
 using System.Collections.Generic;using System.Linq;using System.Threading;using System.Threading.Tasks;using System.Diagnostics;using System.IO;using Microsoft.Win32;using System.Runtime.InteropServices;using System.Text.RegularExpressions;using System.Management;
 class P{
  [DllImport("iphlpapi.dll")] static extern int GetBestInterface(uint dest,out uint idx);
@@ -14,7 +14,7 @@ class P{
   if(a.Length>0&&a[0]=="--trigger"){try{EventWaitHandle.OpenExisting("NetPanel_"+P.U+"_test").Set();}catch{return 2;}return 0;}
   if(!created&&shot==null) return 0;
   Application.EnableVisualStyles();
-  if(shot!=null){var f=new Panel();int ti=Array.IndexOf(a,"--theme");if(ti>=0&&ti+1<a.Length){int tv=Array.IndexOf(Th.Names,a[ti+1]);if(tv>=0)Th.Id=tv;}if(a.Contains("--demo"))Demo=true;f.Shot(shot,speed);return 0;}
+  if(shot!=null){var f=new Panel();int ti=Array.IndexOf(a,"--theme");if(ti>=0&&ti+1<a.Length){int tv=Array.IndexOf(Th.Names,a[ti+1]);if(tv>=0)Th.Id=tv;}if(a.Contains("--demo"))Demo=true;int hi2=Array.IndexOf(a,"--hold");int hv;if(hi2>=0&&hi2+1<a.Length&&int.TryParse(a[hi2+1],out hv))f.Hold=hv;f.Shot(shot,speed);return 0;}
   new Tray();Application.Run();GC.KeepAlive(m);return 0;}
  static int SetDns(string[] a){ // --setdns ifIndex mode [servers...]
   string idx=a[1],mode=a[2];string cmd;
@@ -48,10 +48,38 @@ static class Th{
   double q=l<0.5?l*(1+s):l+s-l*s,p=2*l-q;Func<double,double> f=t=>{if(t<0)t+=1;if(t>1)t-=1;return t<1/6.0?p+(q-p)*6*t:t<0.5?q:t<2/3.0?p+(q-p)*(2/3.0-t)*6:p;};
   return Color.FromArgb((int)Math.Round(f(h/360+1/3.0)*255),(int)Math.Round(f(h/360)*255),(int)Math.Round(f(h/360-1/3.0)*255));}
 }
+// ---------- connection uptime / drops (no extra traffic) ----------
+// A drop = the link goes from up to down. Down means no active interface (P.Active()==null: adapter down, no default route, Offline),
+// sampled every 2 s by the tray timer (1 s while the panel is open), or 3 consecutive failed pings (~6 s) while the panel is open and the interface is up.
+// Uptime = since the current connection came up: Windows NetworkProfile connect time (see Sync) when available, else since NetPanel saw it come up / started.
+// A drop NetPanel sees, or resume from sleep/hibernate, restarts uptime. Drops reset at local midnight.
+static class Link{
+ public static bool Up;static bool init,pingDown;static int fails;public static DateTime Since=DateTime.Now,Day=DateTime.Today;public static int Drops;public static Action Changed;
+ static void Roll(){if(DateTime.Today!=Day){Day=DateTime.Today;Drops=0;if(Changed!=null)Changed();}}
+ public static void Iface(bool up){Roll();if(!up){pingDown=false;fails=0;}Set(up&&!pingDown);}
+ public static void Ping(bool ok){Roll();if(!Up&&!pingDown)return;if(ok){fails=0;if(pingDown){pingDown=false;Set(true);}}else if(++fails==3){pingDown=true;Set(false);}}
+ static void Set(bool on){if(!init){init=true;Up=on;Since=DateTime.Now;if(on)Sync();return;}if(Up&&!on){Up=false;gen++;Drops++;Since=DateTime.Now;if(Changed!=null)Changed();}else if(!Up&&on){Up=true;gen++;Since=floor=DateTime.Now;Sync();}}
+ // Windows connect time: newest NetworkProfile/Operational 10000 (connected) for the active adapter's network name, unless a newer
+ // 10001 (disconnected) for that name comes first. Log is readable by Interactive Users (no admin). Queried off the UI thread only
+ // at startup, after a reconnect NetPanel sees, and on resume - never per tick. Result is clamped to 'floor' (last up transition
+ // NetPanel saw itself, or resume from sleep/hibernate) so ping-detected drops and sleep still reset uptime. Not found -> keep local value.
+ static DateTime floor=DateTime.MinValue;static int gen;public static string Src="local";
+ static Link(){try{Microsoft.Win32.SystemEvents.PowerModeChanged+=(s,e)=>{if(e.Mode==Microsoft.Win32.PowerModes.Resume){floor=DateTime.Now;if(Since<floor)Since=floor;Sync();}};}catch{}}
+ public static void Sync(){int g0=gen;DateTime fl=floor;System.Threading.ThreadPool.QueueUserWorkItem(_=>{try{var t=WinConnect();if(t==null)return;var v=t.Value<fl?fl:t.Value;if(v>DateTime.Now)return;
+   if(gen==g0&&Up){Since=v;Src="NetworkProfile 10000";}}catch{}});}
+ public static DateTime? WinConnect(){var n=P.Active();if(n==null)return null;int idx=n.GetIPProperties().GetIPv4Properties().Index;string name=null;
+  using(var q=new System.Management.ManagementObjectSearcher(@"root\StandardCimv2","SELECT Name FROM MSFT_NetConnectionProfile WHERE InterfaceIndex="+idx))foreach(System.Management.ManagementObject o in q.Get()){name=o["Name"] as string;break;}
+  if(string.IsNullOrEmpty(name))return null;
+  var lq=new System.Diagnostics.Eventing.Reader.EventLogQuery("Microsoft-Windows-NetworkProfile/Operational",System.Diagnostics.Eventing.Reader.PathType.LogName,"*[System[(EventID=10000 or EventID=10001)]]"){ReverseDirection=true};
+  using(var r=new System.Diagnostics.Eventing.Reader.EventLogReader(lq))for(int i=0;i<64;i++){using(var e=r.ReadEvent()){if(e==null)break;if(e.Properties.Count<1||(e.Properties[0].Value as string)!=name)continue;
+   return e.Id==10000&&e.TimeCreated.HasValue?e.TimeCreated:null;}}
+  return null;}
+ public static string UptimeText(){if(!Up)return "down";var t=DateTime.Now-Since;return t.TotalDays>=1?(int)t.TotalDays+"d "+t.Hours+"h":t.TotalHours>=1?(int)t.TotalHours+"h "+t.Minutes+"m":t.Minutes+"m";}
+}
 class Tray{
  NotifyIcon ni=new NotifyIcon();Panel panel;System.Windows.Forms.Timer t=new System.Windows.Forms.Timer();long lr,lt;IntPtr hi;
  public Tray(){
-  panel=new Panel();ni.Text="NetPanel";Upd(0,0);ni.Visible=true;
+  panel=new Panel();ni.Text="NetPanel";Upd(0,0);ni.Visible=true;Link.Iface(P.Active()!=null);
   var cm=new ContextMenuStrip();cm.Renderer=new ToolStripProfessionalRenderer(new DarkColors());cm.BackColor=Th.C(12,14,13);cm.ForeColor=Th.C(46,255,138);Panel.ThemeChanged=()=>{cm.BackColor=Th.C(12,14,13);cm.ForeColor=Th.C(46,255,138);Upd(0,0);};cm.Font=new Font("Consolas",10);
   cm.Items.Add("Open",null,(s,e)=>panel.ShowNear());
   var st=new ToolStripMenuItem("Start with Windows"){Checked=Auto,CheckOnClick=true};st.Click+=(s,e)=>Auto=st.Checked;cm.Items.Add(st);
@@ -59,7 +87,7 @@ class Tray{
   ni.MouseClick+=(s,e)=>{if(e.Button==MouseButtons.Left){if(panel.Visible||(DateTime.Now-panel.Hidden).TotalMilliseconds<250)panel.Hide();else panel.ShowNear();}};
   if(P.Dev){var ev=new EventWaitHandle(false,EventResetMode.AutoReset,"NetPanel_"+P.U+"_test");var sync=new System.Windows.Forms.Timer{Interval=1};sync.Dispose();
   var evT=new System.Windows.Forms.Timer{Interval=1000};evT.Tick+=(s,e)=>{if(ev.WaitOne(0)){var cf=Path.Combine(P.Dir,"cmd.txt");if(File.Exists(cf)){var c=File.ReadAllText(cf).Trim();File.Delete(cf);panel.Cmd(c);}else panel.SelfTest();}};evT.Start();GC.KeepAlive(ev);}
-  t.Interval=2000;t.Tick+=(s,e)=>{try{var n=P.Active();var st2=n.GetIPStatistics();long r=st2.BytesReceived,x=st2.BytesSent;Upd(lr==0?0:r-lr,lt==0?0:x-lt);lr=r;lt=x;}catch{}};t.Start();}
+  t.Interval=2000;t.Tick+=(s,e)=>{try{var n=P.Active();Link.Iface(n!=null);var st2=n.GetIPStatistics();long r=st2.BytesReceived,x=st2.BytesSent;Upd(lr==0?0:r-lr,lt==0?0:x-lt);lr=r;lt=x;}catch{}};t.Start();}
  static bool Auto{get{using(var k=Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run"))return k.GetValue("NetPanel")!=null;}
   set{using(var k=Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run")){if(value)k.SetValue("NetPanel","\""+Application.ExecutablePath+"\"");else k.DeleteValue("NetPanel",false);}}}
  void Upd(long rx,long tx){
@@ -81,13 +109,15 @@ class Panel:Form{
  System.Windows.Forms.Timer tick=new System.Windows.Forms.Timer(),pingT=new System.Windows.Forms.Timer();
  NetworkInterface nic;long lr=-1,lt=-1;double rxR,txR;long totR,totT;string ip="-",gw="-",name="-",speedBadge="",dnsCur="?";int ifIdx=-1;
  Queue<long> pings=new Queue<long>();double lastPing=-1;List<double> rxH=new List<double>(),txH=new List<double>();
- public DateTime Hidden;bool testing;string stPhase="";double stProg,dlM=-1,ulM=-1;string status="";
+ public DateTime Hidden;bool testing;string stPhase="";double stProg,dlM=-1,ulM=-1;string st_="";DateTime stAt;string status{get{return st_;}set{st_=value??"";stAt=DateTime.Now;}}
  RectangleF runR;RectangleF[] dnsR=new RectangleF[4];string[] dnsN={"DHCP","Cloudflare","Google","Custom"};int hover=-2;
  public Panel(){FormBorderStyle=FormBorderStyle.None;ShowInTaskbar=false;TopMost=true;StartPosition=FormStartPosition.Manual;Size=new Size(720,526);BackColor=Color.Black;DoubleBuffered=true;KeyPreview=true;
   tick.Interval=1000;tick.Tick+=(s,e)=>Refresh1();pingT.Interval=2000;pingT.Tick+=(s,e)=>DoPing();
   KeyDown+=(s,e)=>{if(e.KeyCode==Keys.Escape)Hide();};Deactivate+=(s,e)=>OnDeact();NetworkChange.NetworkAddressChanged+=(s,e)=>{try{BeginInvoke((Action)(()=>{netFor=null;ipFor=null;if(Visible){Refresh1();MaybeIp();}}));}catch{}};LoadSettings();
   MouseDown+=(s,e)=>{if(pinned&&e.Button==MouseButtons.Left&&Hit(e.Location)==-2){ReleaseCapture();SendMessage(Handle,0xA1,(IntPtr)2,IntPtr.Zero);px=Left;py=Top;SaveSettings();}};
   anim=new System.Windows.Forms.Timer{Interval=80};anim.Tick+=(s,e)=>{if(rssi!=int.MinValue){double t=Math.Max(0,Math.Min(1,(rssi+90)/60.0));shownLvl+=(t-shownLvl)*0.2;}Invalidate(new Rectangle(70,44,330,26));};
+  Link.Changed=()=>{try{if(IsHandleCreated&&InvokeRequired)BeginInvoke((Action)SaveSettings);else SaveSettings();}catch{}};footT.Interval=15;footT.Tick+=(s,e)=>FootTick();
+  VisibleChanged+=(s,e)=>{if(!Visible)footT.Stop();};
   VisibleChanged+=(s,e)=>{if(Visible){tick.Start();anim.Start();pingT.Start();Refresh1();DoPing();MaybeIp();}else{tick.Stop();pingT.Stop();anim.Stop();tip.SetToolTip(this,"");Hidden=DateTime.Now;wkey=null;reveal=false;}};
   MouseMove+=(s,e)=>{bool ok=reveal&&wkey!=null&&keyR.Contains(e.Location)&&keyMode.Contains("ellipsized");if(ok&&tip.GetToolTip(this)!=wkey)tip.SetToolTip(this,wkey);else if(!ok&&tip.GetToolTip(this)!="")tip.SetToolTip(this,"");int h=Hit(e.Location);if(h!=hover){hover=h;Cursor=h>-2?Cursors.Hand:Cursors.Default;Invalidate();}};
   MouseClick+=(s,e)=>Click1(Hit(e.Location));
@@ -101,7 +131,7 @@ class Panel:Form{
  bool IsWifi(NetworkInterface n){var t=n.NetworkInterfaceType;if(t==NetworkInterfaceType.Wireless80211)return true;if(t==NetworkInterfaceType.Ethernet||t==NetworkInterfaceType.GigabitEthernet)return false;
   if(wlanIds==null){wlanIds=new HashSet<string>();try{if(wlanH==IntPtr.Zero){int nv;WlanOpenHandle(2,IntPtr.Zero,out nv,out wlanH);}IntPtr list;if(WlanEnumInterfaces(wlanH,IntPtr.Zero,out list)==0){int c=Marshal.ReadInt32(list);for(int i=0;i<c;i++){var b=new byte[16];Marshal.Copy(list+8+i*532,b,0,16);wlanIds.Add(new Guid(b).ToString("B").ToUpperInvariant());}WlanFreeMemory(list);}}catch{}}
   return wlanIds.Contains(n.Id.ToUpperInvariant());}
- void Refresh1(){try{var n=P.Active();if(n==null){if(!offline){offline=true;nic=null;name="Offline";netName="";isWifi=false;rxR=txR=0;ip=gw="-";speedBadge="no link";rssi=int.MinValue;bandCh="";}Invalidate();return;}offline=false;if(nic==null||n.Id!=nic.Id){nic=n;lr=-1;lt=-1;}
+ void Refresh1(){try{var n=P.Active();Link.Iface(n!=null);if(n==null){if(!offline){offline=true;nic=null;name="Offline";netName="";isWifi=false;rxR=txR=0;ip=gw="-";speedBadge="no link";rssi=int.MinValue;bandCh="";}Invalidate();return;}offline=false;if(nic==null||n.Id!=nic.Id){nic=n;lr=-1;lt=-1;}
    var s=nic.GetIPStatistics();if(lr>=0){rxR=Math.Max(0,s.BytesReceived-lr);txR=Math.Max(0,s.BytesSent-lt);}lr=s.BytesReceived;lt=s.BytesSent;long[] bs;if(!bases.TryGetValue(nic.Id,out bs)){bs=new long[]{0,0};bases[nic.Id]=bs;}if(lr<bs[0]||lt<bs[1]){bs[0]=0;bs[1]=0;SaveSettings();}totR=lr-bs[0];totT=lt-bs[1];isWifi=IsWifi(nic);
    if((DateTime.Now-netQ).TotalSeconds>5||netFor!=nic.Id){netQ=DateTime.Now;netFor=nic.Id;var nn=nic;Task.Run(()=>QueryNet(nn));}
    rxH.Add(rxR);txH.Add(txR);if(rxH.Count>60){rxH.RemoveAt(0);txH.RemoveAt(0);}
@@ -121,7 +151,7 @@ class Panel:Form{
   // registry unreadable: fall back to a freshly enumerated adapter's IPv4 DNS list
   var f=Fresh(P.Index(n))??n;try{var a=f.GetIPProperties().DnsAddresses.FirstOrDefault(x=>x.AddressFamily==AddressFamily.InterNetwork);return a==null?"DHCP":Classify(a.ToString());}catch{return "?";}}
  void DoPing(){var pg=new Ping();pg.PingCompleted+=(s,e)=>{long v=(e.Error==null&&e.Reply!=null&&e.Reply.Status==IPStatus.Success)?e.Reply.RoundtripTime:-1;
-   lock(pings){pings.Enqueue(v);while(pings.Count>20)pings.Dequeue();}if(v>=0)lastPing=v;pg.Dispose();if(IsHandleCreated)BeginInvoke((Action)Invalidate);};
+   lock(pings){pings.Enqueue(v);while(pings.Count>20)pings.Dequeue();}if(v>=0)lastPing=v;pg.Dispose();if(IsHandleCreated)BeginInvoke((Action)(()=>Link.Ping(v>=0)));if(IsHandleCreated)BeginInvoke((Action)Invalidate);};
   try{pg.SendAsync(IPAddress.Parse("1.1.1.1"),1500,null);}catch{}}
  void Click1(int h){if(h>=20&&h<=23){SetTheme(h-20);return;}if(h==15){ipMask=!ipMask;Invalidate();return;}if(h==14){if(pubIp!=null){try{Clipboard.SetText(pubIp);status="public ip copied to clipboard";}catch{}Invalidate();}else if(ipState=="offline")MaybeIp(true);return;}if(h==10){DoReset();return;}if(h==11){pinned=!pinned;if(pinned){px=Left;py=Top;}SaveSettings();Invalidate();return;}if(h==12){if(reveal){reveal=false;Invalidate();}else FetchKey(()=>{reveal=true;});return;}if(h==13){FetchKey(()=>{try{Clipboard.SetText(wkey);status="network key copied to clipboard";}catch{}});return;}if(h==-1&&!testing)RunSpeed();else if(h>=0)SetDns(h);}
  // ---------- speed test ----------
@@ -189,6 +219,7 @@ class Panel:Form{
   var fill=new List<PointF>(pts){new PointF(pts.Last().X,r.Bottom),new PointF(pts[0].X,r.Bottom)};g.FillPolygon(new SolidBrush(Color.FromArgb(28,c)),fill.ToArray());g.DrawLines(new Pen(c,1.4f),pts.ToArray());}
  protected override void OnPaint(PaintEventArgs e){if(P.Demo){ip="192.0.2.10";gw="192.0.2.1";netName="HOME-WIFI";mac="00:00:5E:00:53:01";pubIp="203.0.113.7";pubLoc="Springfield";ipMask=true;reveal=false;}var g=e.Graphics;g.SmoothingMode=SmoothingMode.AntiAlias;g.TextRenderingHint=System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
   var full=new RectangleF(0,0,Width-1,Height-1);using(var p=Rnd(full,16))using(var bg=new LinearGradientBrush(full,Th.C(6,12,9),Th.C(3,4,4),90f))g.FillPath(bg,p);
+  if(footR.Contains(e.ClipRectangle)){Footer(g);return;}
   for(int i=4;i>=1;i--)using(var p=Rnd(new RectangleF(i,i,Width-1-2*i,Height-1-2*i),16-i))g.DrawPath(new Pen(Th.C(18*(5-i),25,146,91),1.5f),p);
   using(var p=Rnd(new RectangleF(1,1,Width-3,Height-3),15))g.DrawPath(new Pen(Th.C(200,25,146,91),1.2f),p);
   // header icon
@@ -218,7 +249,7 @@ class Panel:Form{
   Row(g,340,"Download",dlM==-2?"error: "+(dlErr??"?"):dlM<0?"-":dlM.ToString("0")+" Mbps","Upload",ulM<0?"-":ulM.ToString("0")+" Mbps",HI,CY);
   Sep(g,376);g.DrawString("DNS PROVIDER",fB,new SolidBrush(EM),24,396);g.DrawString("> current: "+dnsCur,fS,new SolidBrush(DIM),150,398);
   float bw=(Width-48-3*10)/4f;for(int i=0;i<4;i++){dnsR[i]=new RectangleF(24+i*(bw+10),424,bw,42);Btn(g,dnsR[i],dnsN[i],dnsCur==dnsN[i],hover==i);}
-  Sep(g,484);g.DrawString(status!=""?status:"no telemetry // icmp 1.1.1.1 // ipv4: "+(ipSrc??"1.1.1.1/cdn-cgi/trace + ipinfo.io")+" (on open, 5m cache)",fS,new SolidBrush(Th.C(70,100,85)),24,494);}
+  Sep(g,484);Footer(g);}
  // ---------- theme bubbles (hit codes 20-23) ----------
  RectangleF[] thR=new RectangleF[4];public static Action ThemeChanged;int themeSaved;
  void Bubbles(Graphics g){const float D=12,GAP=10;float x0=Width/2f-(4*D+3*GAP)/2f,y=7;
@@ -228,6 +259,33 @@ class Panel:Form{
    if(sel)using(var pn=new Pen(Color.FromArgb(230,TX),1.3f))g.DrawEllipse(pn,RectangleF.Inflate(r,2.5f,2.5f));else if(hov)using(var pn=new Pen(Color.FromArgb(150,c),1f))g.DrawEllipse(pn,RectangleF.Inflate(r,2.5f,2.5f));}
   var lf=new Font("Consolas",7.5f);g.DrawString("Color Scheme",lf,new SolidBrush(DIM),new RectangleF(Width/2f-60,23,120,12),new StringFormat{Alignment=StringAlignment.Center});lf.Dispose();}
  void SetTheme(int t){if(t<0||t>3)return;Th.Id=t;themeSaved=t;SaveSettings();if(ThemeChanged!=null)ThemeChanged();Invalidate();}
+ // ---------- footer: uptime/drops + brief action messages + smooth marquee ----------
+ static readonly Rectangle footR=new Rectangle(20,488,680,26);const float FX=24,FW=672,FY=494,SPEED=35f;const double MSG=4.0,FADE=0.35;
+ System.Windows.Forms.Timer footT=new System.Windows.Forms.Timer();Stopwatch footSw=Stopwatch.StartNew();double footLast,mqPos;bool footAnim;string footMode="";
+ static StringFormat TypoFmt(){var f=(StringFormat)StringFormat.GenericTypographic.Clone();f.FormatFlags|=StringFormatFlags.MeasureTrailingSpaces|StringFormatFlags.NoWrap;return f;}
+ static readonly StringFormat typo=TypoFmt();
+ List<KeyValuePair<string,Color>> FootSegs(out string mode,out int alpha){var segs=new List<KeyValuePair<string,Color>>();Color dim=Th.C(95,125,108),acc=EM;alpha=255;
+  double age=(DateTime.Now-stAt).TotalSeconds;
+  if(st_!=""&&age<MSG){mode="msg:"+st_;if(age>MSG-FADE)alpha=(int)(255*(MSG-age)/FADE);else if(age<FADE)alpha=(int)(255*age/FADE);segs.Add(new KeyValuePair<string,Color>(st_,TX));return segs;}
+  mode="default";if(st_!=""&&age<MSG+FADE)alpha=(int)(255*Math.Min(1,(age-MSG)/FADE));
+  string up=P.Demo?"3h 12m":Link.UptimeText(),dr=P.Demo?"0":Link.Drops.ToString();
+  segs.Add(new KeyValuePair<string,Color>("uptime ",dim));segs.Add(new KeyValuePair<string,Color>(up,acc));segs.Add(new KeyValuePair<string,Color>(" // drops today: ",dim));
+  segs.Add(new KeyValuePair<string,Color>(dr,Link.Drops>0&&!P.Demo?HI:acc));
+  segs.Add(new KeyValuePair<string,Color>(" // no telemetry // icmp 1.1.1.1 // ipv4: "+(ipSrc??"1.1.1.1/cdn-cgi/trace + ipinfo.io")+" (on open, 5m cache)",dim));return segs;}
+ float DrawSegs(Graphics g,List<KeyValuePair<string,Color>> segs,float x,int alpha,bool draw){foreach(var sg in segs){float w=g.MeasureString(sg.Key,fS,PointF.Empty,typo).Width;
+   if(draw&&x<FX+FW&&x+w>FX)using(var b=new SolidBrush(Color.FromArgb(alpha*sg.Value.A/255,sg.Value)))g.DrawString(sg.Key,fS,b,x,FY,typo);x+=w;}return x;}
+ void Footer(Graphics g){string mode;int alpha;var segs=FootSegs(out mode,out alpha);if(mode!=footMode){footMode=mode;mqPos=0;}
+  var st=g.Save();g.SetClip(new RectangleF(FX-4,footR.Y,FW+8,footR.Height));float w=DrawSegs(g,segs,0,0,false);bool scroll=w>FW;
+  double age=(DateTime.Now-stAt).TotalSeconds;footAnim=scroll||(st_!=""&&age<MSG+FADE);
+  if(!scroll)DrawSegs(g,segs,FX,alpha,true);
+  else{g.TextRenderingHint=System.Drawing.Text.TextRenderingHint.AntiAlias;const string SEP="   \u2022   ";float sw=g.MeasureString(SEP,fS,PointF.Empty,typo).Width,cyc=w+sw;if(mqPos>=cyc)mqPos%=cyc;
+   for(float x=FX-(float)mqPos;x<FX+FW;x+=cyc){DrawSegs(g,segs,x,alpha,true);using(var b=new SolidBrush(Color.FromArgb(alpha*140/255,EM)))g.DrawString(SEP,fS,b,x+w,FY,typo);}
+   // soft fade at both edges: blend into the panel background
+   float t=(float)FY/Height;Color a1=Th.C(6,12,9),a2=Th.C(3,4,4),bgc=Color.FromArgb((int)(a1.R+(a2.R-a1.R)*t),(int)(a1.G+(a2.G-a1.G)*t),(int)(a1.B+(a2.B-a1.B)*t));const float E=28;
+   using(var lb=new LinearGradientBrush(new RectangleF(FX-5,0,E+1,10),bgc,Color.FromArgb(0,bgc),0f))g.FillRectangle(lb,FX-4,footR.Y,E,footR.Height);
+   using(var rb=new LinearGradientBrush(new RectangleF(FX+FW-E-1,0,E+5,10),Color.FromArgb(0,bgc),bgc,0f))g.FillRectangle(rb,FX+FW-E+4,footR.Y,E,footR.Height);}
+  g.Restore(st);if(footAnim&&Visible&&!footT.Enabled){footLast=footSw.Elapsed.TotalSeconds;footT.Start();}}
+ void FootTick(){double now=footSw.Elapsed.TotalSeconds,dt=Math.Min(0.1,now-footLast);footLast=now;if(!Visible||!footAnim){footT.Stop();Invalidate(footR);return;}mqPos+=SPEED*dt;Invalidate(footR);}
  bool shooting;
 
  [DllImport("user32.dll")] static extern bool ReleaseCapture();[DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr h,int m,IntPtr w,IntPtr l);
@@ -235,9 +293,9 @@ class Panel:Form{
  bool isWifi,reveal;string wkey,keyErr,netName="",auth="-",netFor;DateTime netQ;RectangleF resetR,pinR,eyeR,copyR;
  string SetPath{get{return Path.Combine(P.Dir,"settings");}}
  void LoadSettings(){try{foreach(var l in File.ReadAllLines(SetPath)){var kv=l.Split(new[]{'='},2);if(kv.Length<2)continue;
-   if(kv[0]=="pinned")pinned=kv[1]=="1";else if(kv[0]=="theme"){int tv;if(int.TryParse(kv[1],out tv)&&tv>=0&&tv<4){Th.Id=tv;themeSaved=tv;}}else if(kv[0]=="pos"){var p=kv[1].Split(',');px=int.Parse(p[0]);py=int.Parse(p[1]);}
+   if(kv[0]=="pinned")pinned=kv[1]=="1";else if(kv[0]=="drops"){var p=kv[1].Split(',');DateTime d;int n;if(p.Length==2&&DateTime.TryParseExact(p[0],"yyyy-MM-dd",CultureInfo.InvariantCulture,DateTimeStyles.None,out d)&&d==DateTime.Today&&int.TryParse(p[1],out n)){Link.Drops=n;Link.Day=d;}}else if(kv[0]=="theme"){int tv;if(int.TryParse(kv[1],out tv)&&tv>=0&&tv<4){Th.Id=tv;themeSaved=tv;}}else if(kv[0]=="pos"){var p=kv[1].Split(',');px=int.Parse(p[0]);py=int.Parse(p[1]);}
    else if(kv[0].StartsWith("base.")){var p=kv[1].Split(',');bases[kv[0].Substring(5)]=new[]{long.Parse(p[0]),long.Parse(p[1])};}}}catch{}}
- void SaveSettings(){try{Directory.CreateDirectory(P.Dir);var L=new List<string>{"pinned="+(pinned?"1":"0")};if(themeSaved!=0)L.Add("theme="+themeSaved);if(px!=int.MinValue)L.Add("pos="+px+","+py);
+ void SaveSettings(){try{Directory.CreateDirectory(P.Dir);var L=new List<string>{"pinned="+(pinned?"1":"0")};if(themeSaved!=0)L.Add("theme="+themeSaved);if(Link.Drops>0)L.Add("drops="+Link.Day.ToString("yyyy-MM-dd",CultureInfo.InvariantCulture)+","+Link.Drops);if(px!=int.MinValue)L.Add("pos="+px+","+py);
    foreach(var kv in bases)L.Add("base."+kv.Key+"="+kv.Value[0]+","+kv.Value[1]);File.WriteAllLines(SetPath,L);}catch{}}
  public void DoReset(){if(nic==null)return;var s=nic.GetIPStatistics();bases[nic.Id]=new[]{s.BytesReceived,s.BytesSent};SaveSettings();Refresh1();}
  void OnDeact(){if(!shooting&&!pinned)Hide();}
@@ -333,8 +391,11 @@ class Panel:Form{
   if(pubIp!=null)Eye(g,new RectangleF(x+3,60,14,15),!ipMask,hover==15);}
  public void SelfTest(){shooting=true;ShowNear();RunSpeed().ContinueWith(_=>BeginInvoke((Action)(()=>{Refresh1();var p=Path.Combine(P.Dir,"shot.png");var b=new Bitmap(Width,Height);DrawToBitmap(b,new Rectangle(0,0,Width,Height));b.Save(p);b.Dispose();
    File.WriteAllText(Path.Combine(P.Dir,"shot.txt"),"tray dl="+dlM.ToString("0.0")+" src="+dlSrc+" err="+dlErr+" ul="+ulM.ToString("0.0"));shooting=false;})));}
+ public int Hold;[DllImport("user32.dll")] static extern bool WaitMessage();
  public void Shot(string path,bool speed){shooting=true;Opacity=0.01;ShowNear();var end=DateTime.Now.AddSeconds(6);
   Task st=speed?RunSpeed():null;while(DateTime.Now<end||(st!=null&&!st.IsCompleted)){Application.DoEvents();Thread.Sleep(50);}Refresh1();
+  if(Hold>0){var hw=Stopwatch.StartNew();while(hw.Elapsed.TotalSeconds<Hold){Application.DoEvents();WaitMessage();}}
+  else if(P.Demo)mqPos=0;
   var b=new Bitmap(Width,Height);DrawToBitmap(b,new Rectangle(0,0,Width,Height));b.Save(path);
   File.WriteAllText(Path.ChangeExtension(path,".txt"),"adapter="+name+" ip="+ip+" gw="+gw+" ping="+lastPing+" rx="+rxR+" dns="+dnsCur+" dl="+dlM.ToString("0.0")+" src="+dlSrc+" err="+dlErr+" ul="+ulM.ToString("0.0")+" status="+status);}
 }
